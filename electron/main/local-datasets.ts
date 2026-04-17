@@ -33,6 +33,8 @@ const FBO_SHIPMENT_TRACE_STAGE_LABELS: Record<string, string> = {
   'api.refresh.begin': 'FBO дата отгрузки: старт API-обновления',
   'api.refresh.list.loaded': 'FBO дата отгрузки: list-данные загружены',
   'api.refresh.fast_snapshot.returned': 'Продажи: быстрый snapshot по списку отправлений готов',
+  'api.refresh.background.scheduled': 'Продажи: CSV-обогащение запущено в фоне',
+  'api.refresh.background.completed': 'Продажи: CSV-обогащение завершено в фоне',
   'api.refresh.details.loaded': 'FBO дата отгрузки: детали загружены',
   'api.refresh.compat.loaded': 'FBO дата отгрузки: compat-детали загружены',
   'api.refresh.report.begin': 'Продажи дата доставки: старт отчёта postings',
@@ -1040,6 +1042,7 @@ type SalesRefreshProgressInfo = {
 
 type SalesRefreshOptions = {
   onProgress?: (info: SalesRefreshProgressInfo) => void
+  returnAfterFastSnapshot?: boolean
 }
 
 function buildSalesSnapshotTraceMeta(args: {
@@ -1646,7 +1649,67 @@ function trimSalesListPayloadForSessionSnapshot(payload: any) {
 }
 
 function shouldUseFastSalesListFirstRefresh(): boolean {
-  return false
+  return true
+}
+
+const salesFullEnrichmentInFlight = new Set<string>()
+
+function getSalesFullEnrichmentKey(secrets: Secrets, requestedPeriod: SalesPeriod | null | undefined): string {
+  return `${secrets.clientId || 'unknown'}|${buildDatasetScopeKey(requestedPeriod)}`
+}
+
+function scheduleSalesFullEnrichmentInBackground(
+  secrets: Secrets,
+  requestedPeriod: SalesPeriod | null | undefined,
+  options: SalesRefreshOptions,
+) {
+  const key = getSalesFullEnrichmentKey(secrets, requestedPeriod)
+  if (salesFullEnrichmentInFlight.has(key)) return
+  salesFullEnrichmentInFlight.add(key)
+
+  logFboShipmentTrace('api.refresh.background.scheduled', {
+    storeClientId: secrets.clientId,
+    period: requestedPeriod,
+    meta: {
+      scopeKey: buildDatasetScopeKey(requestedPeriod),
+      reason: 'UI already has fast API rows; CSV report/details continue without blocking the sync spinner.',
+    },
+  })
+
+  const backgroundOptions: SalesRefreshOptions = {
+    onProgress: options.onProgress,
+    returnAfterFastSnapshot: false,
+  }
+
+  void refreshSalesRawSnapshotFromApi(secrets, requestedPeriod, backgroundOptions)
+    .then((result) => {
+      logFboShipmentTrace('api.refresh.background.completed', {
+        storeClientId: secrets.clientId,
+        period: requestedPeriod,
+        itemsCount: Number(result?.rowsCount ?? 0),
+        meta: {
+          scopeKey: buildDatasetScopeKey(requestedPeriod),
+          rowsCount: Number(result?.rowsCount ?? 0),
+        },
+      })
+    })
+    .catch((e: any) => {
+      logFboShipmentTrace('api.refresh.error', {
+        storeClientId: secrets.clientId,
+        period: requestedPeriod,
+        status: 'error',
+        errorMessage: translateSalesDatasetErrorMessage(e?.message ?? String(e)),
+        meta: {
+          scopeKey: buildDatasetScopeKey(requestedPeriod),
+          background: true,
+          technicalError: e?.message ?? String(e),
+          stack: e?.stack ?? null,
+        },
+      })
+    })
+    .finally(() => {
+      salesFullEnrichmentInFlight.delete(key)
+    })
 }
 
 function persistFastSalesSessionSnapshot(args: {
@@ -1912,7 +1975,8 @@ export async function refreshSalesRawSnapshotFromApi(
       requestedPeriod: requestedPeriod ?? null,
     })
 
-    if (shouldUseFastSalesListFirstRefresh()) {
+    if (shouldUseFastSalesListFirstRefresh() && options.returnAfterFastSnapshot !== false) {
+      scheduleSalesFullEnrichmentInBackground(secrets, requestedPeriod, options)
       return { rowsCount: fastSnapshot.rowsCount }
     }
 
