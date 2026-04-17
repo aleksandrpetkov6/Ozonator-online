@@ -18,6 +18,7 @@ let syncProductsInFlight: Promise<any> | null = null
 let salesRefreshInFlight: Promise<{ rowsCount: number }> | null = null
 let salesRefreshInFlightScopeKey = ''
 const salesSnapshotWarmupInFlight = new Map<string, Promise<void>>()
+const salesSnapshotWarmupLastStartedAt = new Map<string, number>()
 let latestSalesWarmupScopeKey = ''
 let latestRequestedSalesPeriod: SalesPeriod | null = null
 const LOCAL_SERVER_PORT_KEY = 'local_server.port'
@@ -949,7 +950,12 @@ startupLog('sales.refresh.serial.reused', { reason, scopeKey: requestedScopeKey,
 return { rowsCount: Array.isArray(rows) ? rows.length : 0 }
 }
 }
-const job = (async () => await refreshSalesRawSnapshotFromApi(secrets, requestedPeriod ?? null))()
+const job = (async () => await refreshSalesRawSnapshotFromApi(secrets, requestedPeriod ?? null, {
+  onProgress: (info) => {
+    startupLog('sales.refresh.progressive_publish', { reason, scopeKey: requestedScopeKey, ...info })
+    emitRendererDataUpdatedEvents()
+  },
+}))()
 salesRefreshInFlight = job
 salesRefreshInFlightScopeKey = requestedScopeKey
 startupLog('sales.refresh.serial.start', { reason, scopeKey: requestedScopeKey, period: requestedPeriod })
@@ -963,10 +969,14 @@ if (salesRefreshInFlight === job) {
 }
 }
 
-function warmupSalesSnapshotInBackground(period?: SalesPeriod | null, reason = 'sales-read') {
+function warmupSalesSnapshotInBackground(period?: SalesPeriod | null, reason = 'sales-read', options?: { force?: boolean }) {
 const scopeKey = getSalesWarmupScopeKey(period)
 latestSalesWarmupScopeKey = scopeKey
 if (salesSnapshotWarmupInFlight.has(scopeKey)) return
+
+const lastStartedAt = salesSnapshotWarmupLastStartedAt.get(scopeKey) ?? 0
+if (!options?.force && Date.now() - lastStartedAt < 15000) return
+salesSnapshotWarmupLastStartedAt.set(scopeKey, Date.now())
 
 const job = (async () => {
 if (isQuitting) return
@@ -985,7 +995,7 @@ if (!secrets) return
 
 try {
 const exactBefore = hasExactLocalSalesSnapshot(getActiveStoreClientIdSafe(), period ?? null)
-const warmed = exactBefore
+const warmed = exactBefore && !options?.force
   ? { refreshed: false, rowsCount: getLocalDatasetRows(getActiveStoreClientIdSafe(), 'sales', { period: period ?? null }).length }
   : await runSalesRefreshSerial(secrets, period ?? null, `warmup:${reason}`)
 if (Number(warmed?.rowsCount ?? 0) > 0) {
@@ -1317,31 +1327,20 @@ function translateSalesRefreshError(messageRaw: unknown, rowsCount = 0): string 
 
 async function handleRefreshSales(period: SalesPeriod | null | undefined) {
   const requestedPeriod = rememberRequestedSalesPeriod(period ?? null)
-  try {
-    const secrets = loadSecrets()
-    const refreshed = await runSalesRefreshSerial(secrets, requestedPeriod ?? null, 'refreshSales')
-    return { ok: true, rowsCount: Number(refreshed?.rowsCount ?? 0), rateLimited: false }
-  } catch (e: any) {
-    const technicalMessage = e?.message ?? String(e)
-    const isRateLimited = /HTTP\s*429/.test(technicalMessage)
-    try {
-      const rows = getLocalDatasetRows(getActiveStoreClientIdSafe(), 'sales', { period: requestedPeriod ?? null })
-      if (Array.isArray(rows) && rows.length > 0) {
-        const friendly = translateSalesRefreshError(technicalMessage, rows.length)
-        startupLog('sales.refresh.nonblocking_warning', {
-          period: period ?? null,
-          rowsCount: rows.length,
-          message: friendly,
-          technicalMessage,
-        })
-        return { ok: true, rowsCount: rows.length, rateLimited: isRateLimited, warning: friendly }
-      }
-    } catch {
-      // ignore
-    }
-    const friendly = translateSalesRefreshError(technicalMessage, 0)
-    return { ok: false, error: friendly, rowsCount: 0, rateLimited: isRateLimited }
-  }
+  const rows = getLocalDatasetRows(getActiveStoreClientIdSafe(), 'sales', { period: requestedPeriod ?? null })
+  const rowsCount = Array.isArray(rows) ? rows.length : 0
+
+  setTimeout(() => {
+    warmupSalesSnapshotInBackground(requestedPeriod ?? null, 'refreshSales-direct-view', { force: true })
+  }, 0)
+
+  startupLog('sales.refresh.direct_view_scheduled', {
+    period: requestedPeriod,
+    rowsCount,
+    mode: 'return-current-rows-and-load-ozon-in-background',
+  })
+
+  return { ok: true, rowsCount, rateLimited: false, inProgress: true }
 }
 
 async function handleGetDatasetRows(datasetRaw: unknown, period: SalesPeriod | null | undefined) {
@@ -1354,10 +1353,8 @@ async function handleGetDatasetRows(datasetRaw: unknown, period: SalesPeriod | n
     const rows = truncated ? rowsAll.slice(0, MAX_UI_ROWS) : rowsAll
     if (truncated) startupLog('sales.ui.truncated', { total: rowsAll.length, sent: rows.length })
     const hasExactSnapshot = hasExactLocalSalesSnapshot(getActiveStoreClientIdSafe(), requestedPeriod ?? null)
-    const shouldWarmup = !hasExactSnapshot
-    if (shouldWarmup) {
-      setTimeout(() => warmupSalesSnapshotInBackground(requestedPeriod ?? null, 'local-server:getDatasetRows'), 0)
-    }
+    const shouldWarmup = true
+    setTimeout(() => warmupSalesSnapshotInBackground(requestedPeriod ?? null, 'local-server:getDatasetRows'), 0)
     return { ok: true, dataset, rows, truncated, totalRows: rowsAll.length, warmupScheduled: shouldWarmup, exactSnapshot: hasExactSnapshot }
   }
   const { rows } = readDatasetRowsSafe(dataset, period ?? null)
@@ -1377,10 +1374,8 @@ async function handleGetSales(period: SalesPeriod | null | undefined) {
   const rows = truncated ? rowsAll.slice(0, MAX_UI_ROWS) : rowsAll
   if (truncated) startupLog('sales.ui.truncated', { total: rowsAll.length, sent: rows.length, reason: 'local-server:getSales' })
   const hasExactSnapshot = hasExactLocalSalesSnapshot(getActiveStoreClientIdSafe(), requestedPeriod ?? null)
-  const shouldWarmup = !hasExactSnapshot
-  if (shouldWarmup) {
-    setTimeout(() => warmupSalesSnapshotInBackground(requestedPeriod ?? null, 'local-server:getSales'), 0)
-  }
+  const shouldWarmup = true
+  setTimeout(() => warmupSalesSnapshotInBackground(requestedPeriod ?? null, 'local-server:getSales'), 0)
   return { ok: true, rows, truncated, totalRows: rowsAll.length, warmupScheduled: shouldWarmup, exactSnapshot: hasExactSnapshot }
 }
 
