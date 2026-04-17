@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { existsSync, rmSync } from 'fs'
 import type { ProductPlacementRow, ProductRow, StockViewRow } from '../types'
 import { getDatasetSnapshotDefaultMergeStrategy, getDatasetSnapshotSchemaVersion, inferStableRowKey } from '../data-contracts'
 import { ensurePersistentStorageReady, getLifecycleMarkerPath } from './paths'
