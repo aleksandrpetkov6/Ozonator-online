@@ -32,6 +32,7 @@ const FBO_SHIPMENT_TRACE_LOG_TYPE = 'sales_fbo_shipment_trace' as const
 const FBO_SHIPMENT_TRACE_STAGE_LABELS: Record<string, string> = {
   'api.refresh.begin': 'FBO дата отгрузки: старт API-обновления',
   'api.refresh.list.loaded': 'FBO дата отгрузки: list-данные загружены',
+  'api.refresh.fast_snapshot.returned': 'Продажи: быстрый snapshot по списку отправлений готов',
   'api.refresh.details.loaded': 'FBO дата отгрузки: детали загружены',
   'api.refresh.compat.loaded': 'FBO дата отгрузки: compat-детали загружены',
   'api.refresh.report.begin': 'Продажи дата доставки: старт отчёта postings',
@@ -1620,6 +1621,116 @@ function persistDatasetSnapshot(args: {
   })
 }
 
+
+function trimSalesListPayloadForSessionSnapshot(payload: any) {
+  const postings = extractPostingsFromPayload(payload)
+  if (Array.isArray(postings) && postings.length > 0) return { result: { postings } }
+  return payload
+}
+
+function shouldUseFastSalesListFirstRefresh(): boolean {
+  return true
+}
+
+function persistFastSalesSessionSnapshot(args: {
+  storeClientId: string
+  requestedPeriod: SalesPeriod | null | undefined
+  fbsPayloads: Array<{ endpoint: string; payload: any }>
+  fboPayloads: Array<{ endpoint: string; payload: any }>
+}) {
+  const normalizedRequestedPeriod = normalizeSalesPeriod(args.requestedPeriod)
+  const payloads = [...args.fbsPayloads, ...args.fboPayloads]
+  const fetchedAt = new Date().toISOString()
+  const { rows, sourceEndpoints, deliveryDateTrace, statusTrace } = buildSalesRowsFromPayloads(
+    args.storeClientId,
+    args.requestedPeriod,
+    payloads,
+    new Map<string, any>(),
+    [],
+  )
+
+  const persistRawSnapshot = (endpoint: string, responseBody: any) => {
+    dbRecordApiRawResponse({
+      storeClientId: args.storeClientId,
+      method: 'LOCAL',
+      endpoint,
+      requestBody: {
+        mode: 'sales-cache-snapshot-fast-list',
+        period: normalizedRequestedPeriod,
+      },
+      responseBody,
+      httpStatus: 200,
+      isSuccess: true,
+      fetchedAt,
+    })
+  }
+
+  persistRawSnapshot(SALES_CACHE_SNAPSHOT_ENDPOINTS.fbs, {
+    sourceEndpoint: '/v3/posting/fbs/list',
+    period: normalizedRequestedPeriod,
+    payloads: args.fbsPayloads.map((item) => trimSalesListPayloadForSessionSnapshot(item.payload)),
+  })
+  persistRawSnapshot(SALES_CACHE_SNAPSHOT_ENDPOINTS.fbo, {
+    sourceEndpoint: '/v2/posting/fbo/list',
+    period: normalizedRequestedPeriod,
+    payloads: args.fboPayloads.map((item) => trimSalesListPayloadForSessionSnapshot(item.payload)),
+  })
+  persistRawSnapshot(SALES_CACHE_SNAPSHOT_ENDPOINTS.details, {
+    period: normalizedRequestedPeriod,
+    items: [],
+    skippedReason: 'fast-list-first-refresh',
+  })
+  persistRawSnapshot(SALES_CACHE_SNAPSHOT_ENDPOINTS.postingsReport, {
+    period: normalizedRequestedPeriod,
+    rows: [],
+    skippedReason: 'fast-list-first-refresh',
+  })
+
+  const persistedSalesSnapshot = persistDatasetSnapshot({
+    storeClientId: args.storeClientId,
+    dataset: 'sales',
+    scopeKey: buildDatasetScopeKey(args.requestedPeriod),
+    period: args.requestedPeriod,
+    rows,
+    sourceKind: 'api-live-list-fast',
+    sourceEndpoints,
+  })
+
+  if (isDefaultRollingSalesPeriod(args.requestedPeriod)) {
+    persistDatasetSnapshot({
+      storeClientId: args.storeClientId,
+      dataset: 'sales',
+      scopeKey: SALES_DEFAULT_ROLLING_SCOPE_KEY,
+      period: args.requestedPeriod,
+      rows,
+      sourceKind: 'api-live-list-fast-default-window',
+      sourceEndpoints,
+    })
+  }
+
+  logFboShipmentTrace('sales.snapshot.saved', {
+    storeClientId: args.storeClientId,
+    period: args.requestedPeriod,
+    itemsCount: Number(persistedSalesSnapshot?.storedRowsCount ?? rows.length),
+    meta: buildSalesSnapshotTraceMeta({
+      rows,
+      scopeKey: buildDatasetScopeKey(args.requestedPeriod),
+      sourceKind: 'api-live-list-fast',
+      saveResult: persistedSalesSnapshot,
+      requestedPeriod: args.requestedPeriod,
+      salesRowsWithDeliveryDate: Number(deliveryDateTrace?.finalRowsWithDeliveryDate ?? 0),
+      salesRowsWithStatus: Number(statusTrace?.finalRowsWithStatus ?? 0),
+    }),
+  })
+
+  return {
+    rowsCount: rows.length,
+    rows,
+    sourceEndpoints,
+  }
+}
+
+
 export function refreshCoreLocalDatasetSnapshots(storeClientId: string | null | undefined) {
   const productsRows = dbGetProducts(storeClientId ?? null)
   const stocksRows = dbGetStockViewRows(storeClientId ?? null)
@@ -1760,6 +1871,30 @@ export async function refreshSalesRawSnapshotFromApi(
         fboAcceptedAtSpan: formatDateSpanLabel(fboAcceptedSpan.from, fboAcceptedSpan.to),
       },
     })
+
+    const fastSnapshot = persistFastSalesSessionSnapshot({
+      storeClientId: secrets.clientId,
+      requestedPeriod,
+      fbsPayloads,
+      fboPayloads,
+    })
+
+    logFboShipmentTrace('api.refresh.fast_snapshot.returned', {
+      storeClientId: secrets.clientId,
+      period: requestedPeriod,
+      itemsCount: fastSnapshot.rowsCount,
+      meta: {
+        mode: 'list-first',
+        reason: 'Sales tab must stop waiting after posting list load; heavy detail/report enrichment is skipped in no-local-db build.',
+        sourceEndpoints: fastSnapshot.sourceEndpoints,
+        requestedPeriodFrom: normalizedRequestedPeriod.from,
+        requestedPeriodTo: normalizedRequestedPeriod.to,
+      },
+    })
+
+    if (shouldUseFastSalesListFirstRefresh()) {
+      return { rowsCount: fastSnapshot.rowsCount }
+    }
 
     const cachedPostingDetailsByKey = getSalesPostingDetailsFromRawCache(secrets.clientId)
     const postingDetailsByKey = payloads.length > 0
