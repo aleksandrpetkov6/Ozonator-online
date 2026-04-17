@@ -1599,6 +1599,97 @@ function readRollingSalesSnapshotRows(
   return filteredRows
 }
 
+function salesRowsHaveCsvReportFields(rows: any[] | null | undefined): boolean {
+  return (Array.isArray(rows) ? rows : []).some((row) => (
+    Boolean(normalizeTextValue(row?.delivery_date))
+    || Boolean(normalizeTextValue(row?.shipment_origin))
+    || normalizeSalesShipmentReportNumber(row?.paid_by_customer) !== ''
+  ))
+}
+
+function shouldAllowRollingSalesSnapshotFallback(requestedPeriod: SalesPeriod | null | undefined): boolean {
+  const normalized = normalizeSalesPeriod(requestedPeriod)
+  if (!normalized.from && !normalized.to) return true
+  return isDefaultRollingSalesPeriod(requestedPeriod)
+}
+
+function getExistingSalesSnapshotRows(
+  storeClientId: string | null | undefined,
+  scopeKey: string,
+): any[] | null {
+  return dbGetDatasetSnapshotRows({
+    storeClientId: storeClientId ?? null,
+    dataset: 'sales',
+    scopeKey,
+  })
+}
+
+function shouldPreserveExistingCsvSalesSnapshot(args: {
+  storeClientId: string | null | undefined
+  scopeKey: string
+  incomingSourceKind: string
+}): boolean {
+  const sourceKind = normalizeTextValue(args.incomingSourceKind)
+  if (!sourceKind.includes('fast')) return false
+  const existingRows = getExistingSalesSnapshotRows(args.storeClientId, args.scopeKey)
+  return salesRowsHaveCsvReportFields(existingRows)
+}
+
+function persistSalesDatasetSnapshotRespectingCsvPriority(args: {
+  storeClientId?: string | null
+  rows: any[]
+  scopeKey: string
+  period?: SalesPeriod | null
+  sourceKind: string
+  sourceEndpoints?: string[]
+}) {
+  if (shouldPreserveExistingCsvSalesSnapshot({
+    storeClientId: args.storeClientId ?? null,
+    scopeKey: args.scopeKey,
+    incomingSourceKind: args.sourceKind,
+  })) {
+    const existingRows = getExistingSalesSnapshotRows(args.storeClientId ?? null, args.scopeKey) ?? []
+    logFboShipmentTrace('sales.snapshot.fast_skipped_csv_priority', {
+      storeClientId: args.storeClientId ?? null,
+      period: args.period,
+      itemsCount: existingRows.length,
+      meta: buildSalesSnapshotTraceMeta({
+        rows: existingRows,
+        scopeKey: args.scopeKey,
+        sourceKind: 'csv-priority-existing-snapshot',
+        requestedPeriod: args.period,
+        salesRowsWithDeliveryDate: countRowsByDeliveryModelWithDeliveryDate(existingRows, 'fbo') + countRowsByDeliveryModelWithDeliveryDate(existingRows, 'fbs') + countRowsByDeliveryModelWithDeliveryDate(existingRows, 'rfbs'),
+        salesRowsWithStatus: countRowsByDeliveryModelWithStatus(existingRows, 'fbo') + countRowsByDeliveryModelWithStatus(existingRows, 'fbs') + countRowsByDeliveryModelWithStatus(existingRows, 'rfbs'),
+      }),
+    })
+    return {
+      dataset: 'sales',
+      scopeKey: args.scopeKey,
+      maxRows: existingRows.length,
+      mergeStrategy: 'preserve_csv_priority',
+      sourceKind: 'csv-priority-existing-snapshot',
+      sourceEndpointsCount: 0,
+      existingRowsCount: existingRows.length,
+      incomingRowsRequestedCount: Array.isArray(args.rows) ? args.rows.length : 0,
+      incomingRowsAcceptedCount: 0,
+      incomingRowsDroppedByNormalize: 0,
+      storedRowsCount: existingRows.length,
+      cappedRowsDropped: 0,
+      schemaVersion: getDatasetSnapshotSchemaVersion('sales'),
+    }
+  }
+
+  return persistDatasetSnapshot({
+    storeClientId: args.storeClientId ?? null,
+    dataset: 'sales',
+    scopeKey: args.scopeKey,
+    period: args.period,
+    rows: args.rows,
+    sourceKind: args.sourceKind,
+    sourceEndpoints: args.sourceEndpoints ?? [],
+  })
+}
+
 function buildDatasetScopeKey(requestedPeriod: SalesPeriod | null | undefined): string {
 
   const normalized = normalizeSalesPeriod(requestedPeriod)
@@ -1759,9 +1850,8 @@ function persistFastSalesSessionSnapshot(args: {
   // Details and postings CSV are slower enrichment sources; the full stage below writes
   // them when Ozon report/detail data is actually available.
 
-  const persistedSalesSnapshot = persistDatasetSnapshot({
+  const persistedSalesSnapshot = persistSalesDatasetSnapshotRespectingCsvPriority({
     storeClientId: args.storeClientId,
-    dataset: 'sales',
     scopeKey: buildDatasetScopeKey(args.requestedPeriod),
     period: args.requestedPeriod,
     rows,
@@ -1770,9 +1860,8 @@ function persistFastSalesSessionSnapshot(args: {
   })
 
   if (isDefaultRollingSalesPeriod(args.requestedPeriod)) {
-    persistDatasetSnapshot({
+    persistSalesDatasetSnapshotRespectingCsvPriority({
       storeClientId: args.storeClientId,
-      dataset: 'sales',
       scopeKey: SALES_DEFAULT_ROLLING_SCOPE_KEY,
       period: args.requestedPeriod,
       rows,
@@ -2642,44 +2731,56 @@ export function getLocalDatasetRows(
     const exactSnapshotRows = readScopedSalesSnapshotRows(storeClientId ?? null, requestedPeriod)
     if (exactSnapshotRows) return exactSnapshotRows
 
-    const rollingRows = readRollingSalesSnapshotRows(storeClientId ?? null, requestedPeriod)
-    if (rollingRows && rollingRows.length > 0) {
-      if (scopeKey && isDefaultRollingSalesPeriod(requestedPeriod)) {
-        const persistedRollingSnapshot = persistDatasetSnapshot({
-          storeClientId,
-          dataset,
-          scopeKey,
-          period: requestedPeriod,
-          rows: rollingRows,
-          sourceKind: 'dataset-snapshot-default-window',
-          sourceEndpoints: [],
-        })
-        logFboShipmentTrace('sales.snapshot.saved', {
-          storeClientId,
-          period: requestedPeriod,
-          itemsCount: Number(persistedRollingSnapshot?.storedRowsCount ?? rollingRows.length),
-          meta: buildSalesSnapshotTraceMeta({
-            rows: rollingRows,
+    if (shouldAllowRollingSalesSnapshotFallback(requestedPeriod)) {
+      const rollingRows = readRollingSalesSnapshotRows(storeClientId ?? null, requestedPeriod)
+      if (rollingRows && rollingRows.length > 0) {
+        if (scopeKey && isDefaultRollingSalesPeriod(requestedPeriod)) {
+          const persistedRollingSnapshot = persistSalesDatasetSnapshotRespectingCsvPriority({
+            storeClientId,
             scopeKey,
-            sourceKind: 'dataset-snapshot-default-window',
-            saveResult: persistedRollingSnapshot,
-            requestedPeriod,
-          }),
-        })
-      } else {
-        logFboShipmentTrace('sales.read.default_snapshot_fallback', {
-          storeClientId: storeClientId ?? null,
-          period: requestedPeriod,
-          itemsCount: rollingRows.length,
-          meta: buildSalesReadTraceMeta({
+            period: requestedPeriod,
             rows: rollingRows,
-            scopeKey: SALES_DEFAULT_ROLLING_SCOPE_KEY,
-            sourceKind: 'dataset-snapshot-default-window-fallback',
-            requestedPeriod,
-          }),
-        })
+            sourceKind: 'dataset-snapshot-default-window',
+            sourceEndpoints: [],
+          })
+          logFboShipmentTrace('sales.snapshot.saved', {
+            storeClientId,
+            period: requestedPeriod,
+            itemsCount: Number(persistedRollingSnapshot?.storedRowsCount ?? rollingRows.length),
+            meta: buildSalesSnapshotTraceMeta({
+              rows: rollingRows,
+              scopeKey,
+              sourceKind: 'dataset-snapshot-default-window',
+              saveResult: persistedRollingSnapshot,
+              requestedPeriod,
+            }),
+          })
+        } else {
+          logFboShipmentTrace('sales.read.default_snapshot_fallback', {
+            storeClientId: storeClientId ?? null,
+            period: requestedPeriod,
+            itemsCount: rollingRows.length,
+            meta: buildSalesReadTraceMeta({
+              rows: rollingRows,
+              scopeKey: SALES_DEFAULT_ROLLING_SCOPE_KEY,
+              sourceKind: 'dataset-snapshot-default-window-fallback',
+              requestedPeriod,
+            }),
+          })
+        }
+        return rollingRows
       }
-      return rollingRows
+    } else {
+      logFboShipmentTrace('sales.read.default_snapshot_skipped_out_of_scope', {
+        storeClientId: storeClientId ?? null,
+        period: requestedPeriod,
+        itemsCount: 0,
+        meta: {
+          requestedScopeKey: scopeKey,
+          rollingScopeKey: SALES_DEFAULT_ROLLING_SCOPE_KEY,
+          reason: 'Rolling 30d snapshot must not replace a wider user-selected period; wait for exact API/CSV snapshot instead.',
+        },
+      })
     }
 
     const cacheByEndpoint = getSalesSnapshotMap(storeClientId ?? null)
