@@ -1,0 +1,609 @@
+diff --git a/.github/workflows/autofix-generate-latest-patch.yml b/.github/workflows/autofix-generate-latest-patch.yml
+index 9d6f5c9..d42da62 100644
+--- a/.github/workflows/autofix-generate-latest-patch.yml
++++ b/.github/workflows/autofix-generate-latest-patch.yml
+@@ -3,7 +3,7 @@ name: AutoFix (generate latest.patch)
+ on:
+   workflow_run:
+     workflows:
+-      - "Windows CI (Озонатор)"
++      - "Windows CI (Ozonator)"
+     types:
+       - completed
+   workflow_dispatch:
+diff --git a/.github/workflows/ci-digest.yml b/.github/workflows/ci-digest.yml
+index a8490d9..3eeb5b5 100644
+--- a/.github/workflows/ci-digest.yml
++++ b/.github/workflows/ci-digest.yml
+@@ -3,7 +3,7 @@ name: CI digest (public)
+ on:
+   workflow_run:
+     workflows:
+-      - "Windows CI (Озонатор)"
++      - "Windows CI (Ozonator)"
+       - "publish-nightly-release"
+       - "Apply patch and open PR"
+       - "enable-automerge"
+@@ -36,7 +36,7 @@ jobs:
+           set -euo pipefail
+           mkdir -p out
+ 
+-          WATCH_REGEX='^(Windows CI \(Озонатор\)|publish-nightly-release|Apply patch and open PR|enable-automerge)$'
++          WATCH_REGEX='^(Windows CI \(Ozonator\)|publish-nightly-release|Apply patch and open PR|enable-automerge)$'
+ 
+           TARGET_RUN_ID="${CUR_RUN_ID}"
+           if [ "${CUR_CONCLUSION}" = "success" ]; then
+diff --git a/.github/workflows/publish-nightly.yml b/.github/workflows/publish-nightly.yml
+index 39503ae..059c3e5 100644
+--- a/.github/workflows/publish-nightly.yml
++++ b/.github/workflows/publish-nightly.yml
+@@ -1,4 +1,4 @@
+-name: Publish Nightly (Озонатор)
++name: Publish Nightly (Ozonator)
+ 
+ on:
+   workflow_dispatch:
+@@ -123,12 +123,10 @@ jobs:
+         run: |
+           New-Item -ItemType Directory -Force -Path release | Out-Null
+ 
+-          # 1) Installer exe — prefer release\Озонатор.exe (electron-builder output)
++          # 1) Installer exe — prefer release\Ozonator.exe (electron-builder output)
+           $installerOk = $false
+           $preferred = @(
+-            (Join-Path $PWD 'release\Озонатор.exe'),
+             (Join-Path $PWD 'release\Ozonator.exe'),
+-            (Join-Path $PWD 'Озонатор.exe'),
+             (Join-Path $PWD 'Ozonator.exe')
+           )
+ 
+diff --git a/.github/workflows/windows-ci.yml b/.github/workflows/windows-ci.yml
+index 38ecfe4..a49355b 100644
+--- a/.github/workflows/windows-ci.yml
++++ b/.github/workflows/windows-ci.yml
+@@ -1,4 +1,4 @@
+-name: Windows CI (Озонатор)
++name: Windows CI (Ozonator)
+ 
+ on:
+   push:
+@@ -146,8 +146,8 @@ jobs:
+ 
+           # 1) Installer
+           $preferred = @(
+-            (Join-Path $PWD 'release\Озонатор.exe'),
+-            (Join-Path $PWD 'Озонатор.exe')
++            (Join-Path $PWD 'release\Ozonator.exe'),
++            (Join-Path $PWD 'Ozonator.exe')
+           )
+ 
+           foreach ($p in $preferred) {
+diff --git a/.github/workflows/zip-ci-reports.yml b/.github/workflows/zip-ci-reports.yml
+index 929f234..fce406f 100644
+--- a/.github/workflows/zip-ci-reports.yml
++++ b/.github/workflows/zip-ci-reports.yml
+@@ -2,7 +2,7 @@ name: Zip CI reports (Ozonator)
+ 
+ on:
+   workflow_run:
+-    workflows: ["Windows CI (Озонатор)"]
++    workflows: ["Windows CI (Ozonator)"]
+     types: [completed]
+ 
+ permissions:
+diff --git a/Ozonator.cmd b/Ozonator.cmd
+index 1af89fc..47eb047 100644
+--- a/Ozonator.cmd
++++ b/Ozonator.cmd
+@@ -1,10 +1,10 @@
+ @echo off
+ setlocal
+ cd /d "%~dp0"
+-if exist "%~dp0release\win-unpacked\Озонатор.exe" (
+-  start "" "%~dp0release\win-unpacked\Озонатор.exe"
++if exist "%~dp0release\win-unpacked\Ozonator.exe" (
++  start "" "%~dp0release\win-unpacked\Ozonator.exe"
+ ) else (
+-  echo Portable билд не найден: release\win-unpacked\Озонатор.exe
++  echo Portable билд не найден: release\win-unpacked\Ozonator.exe
+   echo Сначала соберите приложение: npm run dist
+   pause
+ )
+diff --git a/README.md b/README.md
+index ce56e96..16094ce 100644
+--- a/README.md
++++ b/README.md
+@@ -1,12 +1,12 @@
+-# Ozon Seller OS — MVP‑0 (v0.1)
++# Ozonator — MVP‑0 (v0.1)
+ 
+-Это исходники MVP‑0: Desktop (macOS/Windows), локальное хранение ключей, онлайн-загрузка данных из Ozon Seller API и отображение `offer_id`.
++Исходники Ozonator: desktop-приложение для Windows/macOS, локальное защищённое хранение ключей и загрузка данных из Ozon Seller API в рамках текущей сессии приложения.
+ 
+ ## Требования
+-- Node.js 20+ (или 18+)
+-- npm / pnpm
++- Node.js 20+
++- npm
+ 
+-## Запуск (dev)
++## Запуск в режиме разработки
+ ```bash
+ npm install
+ npm run dev
+@@ -17,12 +17,12 @@ npm run dev
+ npm run dist
+ ```
+ 
+-> На macOS можно собрать .dmg/.app, на Windows — .exe (NSIS). Для кросс‑сборки используйте CI (GitHub Actions).
++На Windows сборка создаёт NSIS-инсталлятор `Ozonator.exe`. Для кросс‑сборки используйте CI (GitHub Actions).
+ 
+ ## Где лежат данные
+-- Ключи: локально, в зашифрованном виде через Electron `safeStorage` (файл secrets.json в userData).
+-- Локальная SQLite-база отключена: данные Ozon загружаются онлайн и держатся только в текущей сессии приложения.
++- Ключи: локально, в зашифрованном виде через Electron `safeStorage` (файл `secrets.json`).
++- Локальная SQLite-база не используется: рабочие данные Ozon держатся только в памяти текущей сессии приложения.
+ 
+-userData по умолчанию:
+-- Windows: %APPDATA%\Ozon Seller OS (MVP0)
+-- macOS: ~/Library/Application Support/Ozon Seller OS (MVP0)
++Каталог служебного хранения по умолчанию:
++- Windows: `%APPDATA%\Ozonator`
++- macOS: `~/Library/Application Support/Ozonator`
+diff --git a/build/installer.nsh b/build/installer.nsh
+index 5d6c8de..d58b659 100644
+--- a/build/installer.nsh
++++ b/build/installer.nsh
+@@ -1,16 +1,16 @@
+ !include "LogicLib.nsh"
+ 
+ 
+-!define PERSIST_ROOT "$APPDATA\Clothes Hub\OzonatorPersistent"
+-!define PRESERVE_ROOT "$APPDATA\Clothes Hub\OzonatorPersistent\preserve"
++!define PERSIST_ROOT "$APPDATA\Ozonator"
++!define PRESERVE_ROOT "$APPDATA\Ozonator\preserve"
+ 
+ !macro customInit
+   CreateDirectory "${PERSIST_ROOT}"
+   Delete "${PERSIST_ROOT}\installer-ready.marker"
+ 
+-  StrCpy $0 "$INSTDIR\Озонатор.exe"
++  StrCpy $0 "$INSTDIR\Ozonator.exe"
+   IfFileExists "$0" +2 0
+-  StrCpy $0 "$LOCALAPPDATA\Programs\Озонатор\Озонатор.exe"
++  StrCpy $0 "$LOCALAPPDATA\Programs\Ozonator\Ozonator.exe"
+   IfFileExists "$0" 0 custom_init_done
+ 
+   Exec '"$0" --installer-close-request'
+@@ -28,9 +28,9 @@ custom_init_ready:
+   Goto custom_init_done
+ 
+ custom_init_timeout:
+-  ExecWait '"$SYSDIR\taskkill.exe" /IM "Озонатор.exe" /T'
++  ExecWait '"$SYSDIR\taskkill.exe" /IM "Ozonator.exe" /T'
+   Sleep 800
+-  ExecWait '"$SYSDIR\taskkill.exe" /IM "Озонатор.exe" /T /F'
++  ExecWait '"$SYSDIR\taskkill.exe" /IM "Ozonator.exe" /T /F'
+   Delete "${PERSIST_ROOT}\installer-ready.marker"
+ 
+ custom_init_done:
+@@ -40,15 +40,10 @@ custom_init_done:
+   CreateDirectory "${PERSIST_ROOT}"
+   CreateDirectory "$INSTDIR\data"
+ 
+-  IfFileExists "${PRESERVE_ROOT}\app.db" 0 +3
+-    CreateDirectory "$INSTDIR\data"
+-    CopyFiles /SILENT "${PRESERVE_ROOT}\app.db" "$INSTDIR\data"
+-
+   IfFileExists "${PRESERVE_ROOT}\secrets.json" 0 +3
+     CreateDirectory "$INSTDIR\data"
+     CopyFiles /SILENT "${PRESERVE_ROOT}\secrets.json" "$INSTDIR\data"
+ 
+-  Delete "${PRESERVE_ROOT}\app.db"
+   Delete "${PRESERVE_ROOT}\secrets.json"
+   RMDir "${PRESERVE_ROOT}"
+ 
+@@ -61,15 +56,8 @@ custom_install_done:
+ !macroend
+ 
+ !macro customUnInit
+-  StrCpy $R8 "0"
+   StrCpy $R9 "0"
+ 
+-  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Удалить локальную базу Ozonator (app.db)?$\r$\n$\r$\nПо умолчанию база сохраняется." IDYES uninit_delete_db
+-  Goto uninit_after_db
+-uninit_delete_db:
+-  StrCpy $R8 "1"
+-uninit_after_db:
+-
+   MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Удалить сохранённые Client-Id и Api-Key (secrets.json)?$\r$\n$\r$\nПо умолчанию ключи сохраняются." IDYES uninit_delete_secrets
+   Goto uninit_done
+ uninit_delete_secrets:
+@@ -81,14 +69,6 @@ uninit_done:
+   CreateDirectory "${PERSIST_ROOT}"
+   CreateDirectory "${PRESERVE_ROOT}"
+ 
+-  ${If} $R8 == "0"
+-    IfFileExists "$INSTDIR\data\app.db" 0 +2
+-      CopyFiles /SILENT "$INSTDIR\data\app.db" "${PRESERVE_ROOT}\app.db"
+-  ${Else}
+-    Delete "${PRESERVE_ROOT}\app.db"
+-    Delete "$INSTDIR\data\app.db"
+-  ${EndIf}
+-
+   ${If} $R9 == "0"
+     IfFileExists "$INSTDIR\data\secrets.json" 0 +2
+       CopyFiles /SILENT "$INSTDIR\data\secrets.json" "${PRESERVE_ROOT}\secrets.json"
+diff --git a/electron/main/index.ts b/electron/main/index.ts
+index 28a10df..79e1575 100644
+--- a/electron/main/index.ts
++++ b/electron/main/index.ts
+@@ -338,7 +338,7 @@ function getAppBootstrapState() {
+ 
+   return {
+     ok: true,
+-    storageMode: 'online-session',
++    storageMode: 'session',
+     storageRoot: storage.root,
+     dbPath: null,
+     secretsPath: storage.secretsPath,
+@@ -388,7 +388,7 @@ const dir = getLifecycleMarkerRootDir()
+ mkdirSync(dir, { recursive: true })
+ return dir
+ } catch {
+-const dir = join(app.getPath('appData'), 'Clothes Hub', 'OzonatorPersistent')
++const dir = join(app.getPath('appData'), 'Ozonator')
+ mkdirSync(dir, { recursive: true })
+ return dir
+ }
+@@ -532,7 +532,7 @@ width: 1200,
+ height: 760,
+ minWidth: 980,
+ minHeight: 620,
+-title: 'Озонатор',
++title: 'Ozonator',
+ show: false,
+ backgroundColor: '#F2F2F7',
+ autoHideMenuBar: true,
+@@ -563,7 +563,7 @@ startupLog('event.did-fail-load', { code, desc, url, isMainFrame })
+ try {
+ if (isMainFrame && mainWindow && !mainWindow.isDestroyed()) {
+         const html = `<!doctype html><html><body style="font-family:Segoe UI,sans-serif;padding:16px">
+-          <h3>Озонатор не смог загрузить интерфейс</h3>
++          <h3>Ozonator не смог загрузить интерфейс</h3>
+           <div>Причина: ${String(desc || 'did-fail-load')} (code ${String(code)})</div>
+           <div style="margin-top:8px;color:#555">Подробности в файле ozonator-startup.log в папке данных приложения.</div>
+         </body></html>`
+@@ -807,13 +807,13 @@ else safeShowMainWindow('app-activate')
+ } catch (e: any) {
+ startupLog('fatal.startup', e?.stack ?? e?.message ?? String(e))
+ try {
+-dialog.showErrorBox('Озонатор — ошибка запуска', String(e?.message ?? e))
++dialog.showErrorBox('Ozonator — ошибка запуска', String(e?.message ?? e))
+ } catch {}
+ try {
+ if (!mainWindow) {
+ mainWindow = new BrowserWindow({ width: 900, height: 640, show: true, autoHideMenuBar: true })
+         const html = `<!doctype html><html><body style="font-family:Segoe UI,sans-serif;padding:16px">
+-          <h3>Озонатор не запустился</h3>
++          <h3>Ozonator не запустился</h3>
+           <pre style="white-space:pre-wrap">${String(e?.stack ?? e?.message ?? e)}</pre>
+           <div style="color:#555">Подробности: ozonator-startup.log в папке данных приложения.</div>
+         </body></html>`
+@@ -1016,7 +1016,7 @@ if (syncProductsInFlight) return await syncProductsInFlight
+ const job = (async () => {
+ let storeClientId: string | null = null
+ startBootstrapProgress()
+-setBootstrapStageActive('prepare', 'Проверяем ключи и онлайн-доступ', { loaded: 0, total: 1, unitLabel: 'шагов' })
++setBootstrapStageActive('prepare', 'Проверяем ключи и доступ к Ozon', { loaded: 0, total: 1, unitLabel: 'шагов' })
+ try { storeClientId = loadSecrets().clientId } catch {}
+ const logId = dbLogStart('sync_products', storeClientId)
+ try {
+@@ -1029,7 +1029,7 @@ const limit = 1000
+ let pages = 0
+ let total = 0
+ let estimatedProductPages: number | null = null
+-finishBootstrapStage('prepare', 'Ключи и онлайн-доступ готовы')
++finishBootstrapStage('prepare', 'Ключи и доступ к Ozon готовы')
+ 
+ setBootstrapStageActive('products', 'Загружаем товары из Ozon', { loaded: 0, total: null, unitLabel: 'страниц' })
+ for (let guard = 0; guard < 200; guard++) {
+@@ -1217,7 +1217,7 @@ salesSyncError = salesErr?.message ?? String(salesErr)
+ }
+ finishBootstrapStage('sales', salesSyncError ? `Продажи: ${salesSyncError}` : `Продажи загружены: ${salesRowsCount}`)
+ 
+-setBootstrapStageActive('finalize', 'Финализируем онлайн-данные', { loaded: 0, total: 1, unitLabel: 'этапов' })
++setBootstrapStageActive('finalize', 'Финализируем данные', { loaded: 0, total: 1, unitLabel: 'этапов' })
+ if (!secrets.storeName) {
+ try {
+ const name = await ozonGetStoreName(secrets)
+diff --git a/electron/main/storage/db.ts b/electron/main/storage/db.ts
+index 4b9463a..60177d0 100644
+--- a/electron/main/storage/db.ts
++++ b/electron/main/storage/db.ts
+@@ -1,8 +1,7 @@
+-import { existsSync, rmSync } from 'fs'
+ import { createHash } from 'crypto'
+ import type { ProductPlacementRow, ProductRow, StockViewRow } from '../types'
+ import { getDatasetSnapshotDefaultMergeStrategy, getDatasetSnapshotSchemaVersion, inferStableRowKey } from '../data-contracts'
+-import { ensurePersistentStorageReady, getLifecycleMarkerPath, getPersistentDbPath } from './paths'
++import { ensurePersistentStorageReady, getLifecycleMarkerPath } from './paths'
+ 
+ const DEFAULT_LOG_RETENTION_DAYS = 30
+ const MAX_JSON_LEN = 20000
+@@ -287,17 +286,6 @@ function mergeDatasetSnapshotRows(args: {
+   }
+ }
+ 
+-function cleanupOldLocalDbFiles() {
+-  const dbPath = getPersistentDbPath()
+-  for (const filePath of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+-    try {
+-      if (existsSync(filePath)) rmSync(filePath, { force: true })
+-    } catch {
+-      // ignore cleanup errors: the online data layer must not block app start
+-    }
+-  }
+-}
+-
+ export function dbGetAppSetting(key: string): string | null {
+   return appSettings.get(String(key ?? '').trim()) ?? null
+ }
+@@ -311,7 +299,6 @@ export function dbSetAppSetting(key: string, value: string) {
+ export function ensureDb() {
+   if (initialized) return
+   ensurePersistentStorageReady()
+-  cleanupOldLocalDbFiles()
+   if (!appSettings.has('log_retention_days')) appSettings.set('log_retention_days', String(DEFAULT_LOG_RETENTION_DAYS))
+   initialized = true
+ }
+@@ -434,7 +421,7 @@ export function dbSaveDatasetSnapshot(args: {
+ }) {
+   const storeClientId = normalizeStore(args.storeClientId)
+   const dataset = normalizeText(args.dataset)
+-  if (!dataset) throw new Error('Некорректный dataset для online snapshot')
++  if (!dataset) throw new Error('Некорректный dataset для snapshot')
+   const scopeKey = normalizeText(args.scopeKey)
+   const fetchedAt = normalizeText(args.fetchedAt) || nowIso()
+   const sourceKind = normalizeText(args.sourceKind) || 'projection'
+@@ -554,11 +541,11 @@ export function dbIngestLifecycleMarkers(args: { appVersion: string }) {
+   let ingested = 0
+ 
+   if (uninstallExists && !suppressUninstall) {
+-    dbLogEvent('app_uninstall', { startedAt: now, finishedAt: now, meta: { appVersion, onlineMode: true } })
++    dbLogEvent('app_uninstall', { startedAt: now, finishedAt: now, meta: { appVersion, storageMode: 'session' } })
+     ingested += 1
+   }
+   if (installerExists) {
+-    dbLogEvent(suppressUninstall ? 'app_reinstall' : 'app_install', { startedAt: now, finishedAt: now, meta: { appVersion, onlineMode: true, suppressWindowMs: REINSTALL_UNINSTALL_SUPPRESS_WINDOW_MS } })
++    dbLogEvent(suppressUninstall ? 'app_reinstall' : 'app_install', { startedAt: now, finishedAt: now, meta: { appVersion, storageMode: 'session', suppressWindowMs: REINSTALL_UNINSTALL_SUPPRESS_WINDOW_MS } })
+     ingested += 1
+   }
+ 
+diff --git a/electron/main/storage/paths.ts b/electron/main/storage/paths.ts
+index ec8f322..511530a 100644
+--- a/electron/main/storage/paths.ts
++++ b/electron/main/storage/paths.ts
+@@ -2,17 +2,17 @@ import { app } from 'electron'
+ import { mkdirSync } from 'fs'
+ import { dirname, join } from 'path'
+ 
+-const LEGACY_VENDOR_ROOT_SEGMENTS = ['Clothes Hub', 'OzonatorPersistent']
++const PERSISTENT_ROOT_SEGMENTS = ['Ozonator']
+ const INSTALL_LOCAL_STORAGE_DIRNAME = 'data'
+ const LEGACY_INSTALL_SUBDIR_NAMES = new Set([
+-  'ozon-seller-os-mvp0',
++  'ozonator',
+   'resources',
+   'app',
+   'win-unpacked',
+ ])
+ 
+ function normalizeLastPathSegment(input: string) {
+-  return input.replace(/[\\/]+$/, '').split(/[\\/]/).pop()?.trim().toLowerCase() ?? ''
++  return input.replace(/[\\\/]+$/, '').split(/[\\\/]/).pop()?.trim().toLowerCase() ?? ''
+ }
+ 
+ export function getLegacyUserDataDir() {
+@@ -20,7 +20,7 @@ export function getLegacyUserDataDir() {
+ }
+ 
+ export function getLegacyPersistentRootDir() {
+-  return join(app.getPath('appData'), ...LEGACY_VENDOR_ROOT_SEGMENTS)
++  return join(app.getPath('appData'), ...PERSISTENT_ROOT_SEGMENTS)
+ }
+ 
+ export function getLifecycleMarkerRootDir() {
+@@ -45,10 +45,6 @@ export function getPersistentRootDir() {
+   return getLegacyPersistentRootDir()
+ }
+ 
+-export function getPersistentDbPath() {
+-  return join(getPersistentRootDir(), 'app.db')
+-}
+-
+ export function getPersistentSecretsPath() {
+   return join(getPersistentRootDir(), 'secrets.json')
+ }
+@@ -63,12 +59,11 @@ export function ensurePersistentStorageReady() {
+ 
+ export function readPersistentStorageBootstrapState() {
+   const root = getPersistentRootDir()
+-  const dbPath = join(root, 'app.db')
+   const secretsPath = join(root, 'secrets.json')
+ 
+   return {
+     root,
+-    dbPath,
++    dbPath: null,
+     secretsPath,
+   }
+ }
+diff --git a/package-lock.json b/package-lock.json
+index 290d3b4..9ec6493 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,11 +1,11 @@
+ {
+-  "name": "ozon-seller-os-mvp0",
++  "name": "ozonator",
+   "version": "0.1.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+-      "name": "ozon-seller-os-mvp0",
++      "name": "ozonator",
+       "version": "0.1.0",
+       "dependencies": {
+         "react": "^18.3.1",
+diff --git a/package.json b/package.json
+index b2f3bb5..5a7c276 100644
+--- a/package.json
++++ b/package.json
+@@ -1,8 +1,8 @@
+ {
+-  "name": "ozon-seller-os-mvp0",
++  "name": "ozonator",
+   "private": true,
+   "version": "0.1.0",
+-  "description": "Озонатор: онлайн-загрузка данных Ozon без локальной SQLite-базы",
++  "description": "Ozonator: загрузка данных Ozon без локальной SQLite-базы",
+   "main": "dist/main/index.js",
+   "scripts": {
+     "dev": "electron-vite dev",
+@@ -34,8 +34,8 @@
+     "vite": "^5.4.21"
+   },
+   "build": {
+-    "appId": "com.clothes-hub.ozon-seller-os",
+-    "productName": "Озонатор",
++    "appId": "com.ozonator.app",
++    "productName": "Ozonator",
+     "directories": {
+       "output": "release"
+     },
+@@ -46,7 +46,7 @@
+       "target": [
+         "nsis"
+       ],
+-      "executableName": "Озонатор",
++      "executableName": "Ozonator",
+       "icon": "build/icon.ico"
+     },
+     "asarUnpack": [
+@@ -57,13 +57,13 @@
+       "perMachine": false,
+       "createDesktopShortcut": "always",
+       "createStartMenuShortcut": true,
+-      "shortcutName": "Озонатор",
++      "shortcutName": "Ozonator",
+       "include": "build/installer.nsh",
+       "installerIcon": "build/icon.ico",
+       "uninstallerIcon": "build/icon.ico",
+       "installerHeaderIcon": "build/icon.ico",
+       "allowToChangeInstallationDirectory": true
+     },
+-    "artifactName": "Озонатор.${ext}"
++    "artifactName": "Ozonator.${ext}"
+   }
+ }
+diff --git a/src/renderer/index.html b/src/renderer/index.html
+index 8289ceb..b10d4df 100644
+--- a/src/renderer/index.html
++++ b/src/renderer/index.html
+@@ -4,7 +4,7 @@
+     <meta charset="UTF-8" />
+     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+     <link rel="icon" type="image/png" href="/favicon.png" />
+-    <title>Озонатор</title>
++    <title>Ozonator</title>
+   </head>
+   <body>
+     <div id="root"></div>
+diff --git a/src/renderer/src/ui/App.tsx b/src/renderer/src/ui/App.tsx
+index 230d334..14f809f 100644
+--- a/src/renderer/src/ui/App.tsx
++++ b/src/renderer/src/ui/App.tsx
+@@ -8,7 +8,7 @@ import { formatDateTimeRu } from './utils/dateTime'
+ import { DEFAULT_UI_DATE_RANGE_DAYS, UI_DATE_RANGE_LS_KEY, getDefaultDateRange, readDateRangeWithDefault, sanitizeDateInput, type UiDateRange } from './utils/dateRangeDefaults'
+ import { useGlobalTableEnhancements } from './utils/tableEnhancements'
+ 
+-const baseTitle = 'Озонатор'
++const baseTitle = 'Ozonator'
+ const STORE_NAME_LS_KEY = 'ozonator_store_name'
+ const DEMAND_FORECAST_PERIOD_LS_KEY = UI_DATE_RANGE_LS_KEY
+ const APP_UI_DRAFT_LS_KEY = 'ozonator_app_ui_draft'
+@@ -548,7 +548,7 @@ export default function App() {
+   const refreshBootstrapUi = useCallback(async () => {
+     try {
+       const resp = await window.api.getBootstrapState()
+-      if (!resp.ok) throw new Error(resp.error ?? 'Не удалось определить состояние онлайн-данных')
++      if (!resp.ok) throw new Error(resp.error ?? 'Не удалось определить состояние данных')
+ 
+       const required = !!resp.requiresInitialSync
+       const hasSecrets = !!resp.hasSecrets
+@@ -583,7 +583,7 @@ export default function App() {
+         required: true,
+         skipInitialSync: false,
+         step: 'error',
+-        error: e?.message ?? 'Не удалось подготовить онлайн-данные',
++        error: e?.message ?? 'Не удалось подготовить данные',
+       }))
+     }
+   }, [online])
+@@ -717,7 +717,7 @@ export default function App() {
+         ? 'Нет соединения с интернетом. Как только сеть появится, загрузка продолжится.'
+         : resp.error === 'SYNC_ALREADY_RUNNING'
+           ? null
+-          : (resp.error ?? 'Не удалось загрузить онлайн-данные.')
++          : (resp.error ?? 'Не удалось загрузить данные.')
+ 
+       if (resp.error === 'OFFLINE') {
+         setBootstrapUi((prev) => ({ ...prev, step: 'waiting-online', error: null }))
+@@ -820,8 +820,8 @@ export default function App() {
+   const bootstrapTitle = bootstrapUi.step === 'waiting-online'
+     ? 'Ждём интернет для первой загрузки'
+     : bootstrapUi.step === 'error'
+-      ? 'Загрузка онлайн-данных остановилась'
+-      : 'Подготавливаем онлайн-данные'
++      ? 'Загрузка данных остановилась'
++      : 'Подготавливаем данные'
+   const bootstrapCompletedStages = Math.min(bootstrapProgress.totalStages, Math.max(0, bootstrapProgress.completedStages))
+   const bootstrapRemainingStages = Math.max(0, bootstrapProgress.totalStages - bootstrapCompletedStages)
+   const bootstrapEta = formatBootstrapEta(bootstrapProgress.etaSeconds)
+@@ -1148,7 +1148,7 @@ export default function App() {
+           {showBootstrapWelcome && (
+             <div className="bootstrapWelcomeOverlay">
+               <div className="bootstrapWelcomeCard bootstrapProgressCard">
+-                <div className="bootstrapWelcomeBadge">Первая онлайн-загрузка</div>
++                <div className="bootstrapWelcomeBadge">Первая загрузка данных</div>
+                 <h2 className="bootstrapWelcomeTitle">{bootstrapTitle}</h2>
+ 
+                 <div className="bootstrapWelcomeStatus bootstrapProgressStatus">
+diff --git a/src/renderer/src/ui/pages/LogsPage.tsx b/src/renderer/src/ui/pages/LogsPage.tsx
+index ce95042..f6ae727 100644
+--- a/src/renderer/src/ui/pages/LogsPage.tsx
++++ b/src/renderer/src/ui/pages/LogsPage.tsx
+@@ -579,7 +579,7 @@ function getSectionTitle(key: TraceCategoryKey): string {
+ }
+ 
+ function getSectionIntro(key: TraceCategoryKey): string {
+-  if (key === 'shipment') return 'Показывает, как загружались отправления FBO и как дата отгрузки попала в текущую онлайн-сессию.'
++  if (key === 'shipment') return 'Показывает, как загружались отправления FBO и как дата отгрузки попала в текущую сессию приложения.'
+   if (key === 'delivery') return 'Показывает путь даты доставки: от формирования postings CSV до применения в строки продаж.'
+   if (key === 'origin') return 'Показывает заполнение столбца «Склад / кластер отгрузки»: итоговое значение берётся из API Ozon, а postings CSV используется как диагностический источник.'
+   if (key === 'status') return 'Показывает путь статуса: от postings CSV до применения в строки продаж и очистки деталей для «Доставлен».'
+diff --git a/src/renderer/src/ui/pages/SettingsPage.tsx b/src/renderer/src/ui/pages/SettingsPage.tsx
+index 7d304ac..283c235 100644
+--- a/src/renderer/src/ui/pages/SettingsPage.tsx
++++ b/src/renderer/src/ui/pages/SettingsPage.tsx
+@@ -229,7 +229,7 @@ export default function SettingsPage() {
+             <span>Базы не загружать</span>
+           </label>
+           <div style={{ marginTop: 8, opacity: 0.8 }}>
+-            Можно сохранить ключи и зайти в программу без первичной онлайн-загрузки. Загрузишь данные позже вручную.
++            Можно сохранить ключи и зайти в программу без первичной загрузки данных. Загрузишь данные позже вручную.
+           </div>
+         </div>
+       )}

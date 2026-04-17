@@ -1,0 +1,53 @@
+name: Zip CI reports (Ozonator)
+
+on:
+  workflow_run:
+    workflows: ["Windows CI (Ozonator)"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  zip-reports:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: windows-latest
+    steps:
+      - name: Download artifacts from Windows CI run
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          path: _artifacts
+
+      - name: Pack TestReport + e2e-results to zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path _zips | Out-Null
+
+          $testReport = Get-ChildItem -Path _artifacts -Recurse -File -Filter 'TestReport.txt' | Select-Object -First 1
+          if ($null -ne $testReport) {
+            Compress-Archive -Path $testReport.FullName -DestinationPath (Join-Path (Get-Location) '_zips/TestReport.zip') -Force
+            Write-Host "Packed TestReport.zip from $($testReport.FullName)"
+          } else {
+            Write-Host 'TestReport.txt not found in artifacts'
+          }
+
+          $e2eDir = Get-ChildItem -Path _artifacts -Recurse -Directory | Where-Object { $_.Name -eq 'e2e-results' } | Select-Object -First 1
+          if ($null -ne $e2eDir) {
+            Compress-Archive -Path $e2eDir.FullName -DestinationPath (Join-Path (Get-Location) '_zips/e2e-results.zip') -Force
+            Write-Host "Packed e2e-results.zip from $($e2eDir.FullName)"
+          } else {
+            Write-Host 'e2e-results folder not found in artifacts'
+          }
+
+      - name: Upload zipped reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports-zipped.zip
+          path: |
+            _zips/TestReport.zip
+            _zips/e2e-results.zip

@@ -1,0 +1,43 @@
+name: TASK (Ozonator)
+description: Задача для автономного агента (CI должен стать зелёным и выдать Ozonator.exe)
+title: "TASK: "
+labels: ["task"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Что нужно сделать
+      description: Коротко и конкретно. Если есть ссылка/скрин/логи — приложи.
+      placeholder: "Например: исправить ошибку X, добавить функцию Y..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Контекст / ограничения
+      description: Что нельзя менять, какие нюансы важны.
+      placeholder: "Нельзя трогать..., нужно сохранить..., и т.д."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: Definition of Done (обязательно)
+      options:
+        - label: windows-ci зелёный
+          required: true
+        - label: В Artifacts есть Ozonator.exe
+          required: true
+        - label: В Artifacts есть portable-win-unpacked.zip
+          required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Как проверить (если нужно)
+      description: Критерии приёмки, сценарии.
+      placeholder: "Шаги: 1) ... 2) ... 3) ..."
+    validations:
+      required: false

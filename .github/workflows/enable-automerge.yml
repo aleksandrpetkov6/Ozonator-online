@@ -1,0 +1,37 @@
+name: enable-automerge
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  enable:
+    if: >
+      github.event.pull_request.draft == false &&
+      (
+        startsWith(github.event.pull_request.head.ref, 'bot/apply-patch-') ||
+        startsWith(github.event.pull_request.head.ref, 'patch/apply-') ||
+        github.event.pull_request.user.login == 'github-copilot' ||
+        contains(github.event.pull_request.user.login, 'copilot')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require PR_BOT_TOKEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.PR_BOT_TOKEN }}" ]; then
+            echo "::error::Missing required secret PR_BOT_TOKEN (fine-grained PAT)."
+            exit 1
+          fi
+
+      - name: Enable auto-merge (squash)
+        uses: peter-evans/enable-pull-request-automerge@v3
+        with:
+          token: ${{ secrets.PR_BOT_TOKEN }}
+          pull-request-number: ${{ github.event.pull_request.number }}
+          merge-method: squash

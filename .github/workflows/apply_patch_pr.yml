@@ -1,0 +1,126 @@
+name: Apply patch to main
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "patches/latest.patch"
+  workflow_dispatch:
+    inputs:
+      patch_path:
+        description: "Path to patch file in repo"
+        required: true
+        default: "patches/latest.patch"
+        type: string
+      base_branch:
+        description: "Branch to apply patch into"
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  apply_patch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_branch || 'main' }}
+          persist-credentials: true
+
+      - name: Resolve inputs
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PATCH_PATH="${{ inputs.patch_path }}"
+            BASE_BRANCH="${{ inputs.base_branch }}"
+          else
+            PATCH_PATH="patches/latest.patch"
+            BASE_BRANCH="main"
+          fi
+
+          echo "patch_path=$PATCH_PATH" >> "$GITHUB_OUTPUT"
+          echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Verify patch file exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH_PATH="${{ steps.vars.outputs.patch_path }}"
+          if [ ! -f "$PATCH_PATH" ]; then
+            echo "PATCH_NOT_APPLICABLE: patch file not found: $PATCH_PATH"
+            exit 1
+          fi
+          echo "Found patch: $PATCH_PATH"
+
+      - name: Apply patch (idempotent)
+        id: apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH_PATH="${{ steps.vars.outputs.patch_path }}"
+
+          if git apply --check "$PATCH_PATH" 2>_apply_err.txt; then
+            git apply "$PATCH_PATH"
+            echo "status=APPLIED" >> "$GITHUB_OUTPUT"
+            echo "APPLIED: patch applied"
+            exit 0
+          fi
+
+          echo "git apply --check failed:"
+          cat _apply_err.txt || true
+
+          if git apply -R --check "$PATCH_PATH" 2>_reverse_err.txt; then
+            echo "status=ALREADY_APPLIED" >> "$GITHUB_OUTPUT"
+            echo "ALREADY_APPLIED: patch is already present in target branch"
+            exit 0
+          fi
+
+          echo "PATCH_NOT_APPLICABLE: patch cannot be applied to current branch"
+          head -n 20 _apply_err.txt || true
+          echo "status=PATCH_NOT_APPLICABLE" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Commit and push to target branch
+        if: steps.apply.outputs.status == 'APPLIED'
+        env:
+          PR_BOT_TOKEN: ${{ secrets.PR_BOT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_BRANCH="${{ steps.vars.outputs.base_branch }}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "NO_CHANGES_TO_COMMIT"
+            exit 0
+          fi
+
+          git commit -m "Apply patch: ${{ steps.vars.outputs.patch_path }}"
+
+          if [ -n "${PR_BOT_TOKEN:-}" ]; then
+            git config --local --unset-all http.https://github.com/.extraheader || true
+            git remote set-url origin "https://x-access-token:${PR_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+          fi
+
+          git push origin HEAD:"$BASE_BRANCH"
+
+      - name: Final summary
+        if: always()
+        shell: bash
+        run: |
+          echo "=== PATCH WORKFLOW SUMMARY ==="
+          echo "Status: ${{ steps.apply.outputs.status || 'N/A' }}"
+          echo "Patch:   ${{ steps.vars.outputs.patch_path || 'N/A' }}"
+          echo "Base:    ${{ steps.vars.outputs.base_branch || 'N/A' }}"

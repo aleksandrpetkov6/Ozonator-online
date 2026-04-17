@@ -1,0 +1,119 @@
+name: CI digest (public)
+
+on:
+  workflow_run:
+    workflows:
+      - "Windows CI (Ozonator)"
+      - "publish-nightly-release"
+      - "Apply patch and open PR"
+      - "enable-automerge"
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: ci-digest
+  cancel-in-progress: true
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build digest (last failed run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CUR_RUN_ID: ${{ github.event.workflow_run.id }}
+          CUR_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+
+          WATCH_REGEX='^(Windows CI \(Ozonator\)|publish-nightly-release|Apply patch and open PR|enable-automerge)$'
+
+          TARGET_RUN_ID="${CUR_RUN_ID}"
+          if [ "${CUR_CONCLUSION}" = "success" ]; then
+            found="$(gh api -H "Accept: application/vnd.github+json" "/repos/${REPO}/actions/runs?per_page=50" \
+              --jq '.workflow_runs[]
+                    | select(.conclusion != null)
+                    | select(.conclusion != "success")
+                    | select(.name | test("'"$WATCH_REGEX"'"))
+                    | .id' | head -n 1 || true)"
+            if [ -n "${found}" ]; then
+              TARGET_RUN_ID="${found}"
+            fi
+          fi
+
+          run_json="$(gh api -H "Accept: application/vnd.github+json" "/repos/${REPO}/actions/runs/${TARGET_RUN_ID}")"
+
+          WF_NAME="$(echo "$run_json" | jq -r '.name')"
+          RUN_URL="$(echo "$run_json" | jq -r '.html_url')"
+          CONCLUSION="$(echo "$run_json" | jq -r '.conclusion')"
+          HEAD_SHA="$(echo "$run_json" | jq -r '.head_sha')"
+          HEAD_BRANCH="$(echo "$run_json" | jq -r '.head_branch')"
+          EVENT="$(echo "$run_json" | jq -r '.event')"
+          CREATED_AT="$(echo "$run_json" | jq -r '.created_at')"
+          UPDATED_AT="$(echo "$run_json" | jq -r '.updated_at')"
+
+          # Переключаемся на коммит того run-а, который пишем в отчёт
+          git fetch --no-tags origin "${HEAD_SHA}" >/dev/null 2>&1 || true
+          git checkout -f "${HEAD_SHA}" >/dev/null 2>&1 || true
+
+          gh run view "${TARGET_RUN_ID}" -R "${REPO}" --log-failed > out/log-failed.txt 2>&1 || true
+
+          {
+            echo "# CI digest"
+            echo
+            echo "- Workflow: \`${WF_NAME}\`"
+            echo "- Run: ${RUN_URL}"
+            echo "- Conclusion: **${CONCLUSION}**"
+            echo "- Event: \`${EVENT}\`"
+            echo "- Branch: \`${HEAD_BRANCH}\`"
+            echo "- Commit: \`${HEAD_SHA}\`"
+            echo "- Created: ${CREATED_AT}"
+            echo "- Updated: ${UPDATED_AT}"
+            echo
+            echo "## Failed logs (tail)"
+            echo
+            echo "```"
+            tail -n 220 out/log-failed.txt 2>/dev/null || true
+            echo "```"
+            echo
+          } > out/last.md
+
+          # Если это ошибка — добавляем полный текст патча
+          if [ "${CONCLUSION}" != "success" ]; then
+            {
+              echo "## Patch (patches/latest.patch)"
+              echo
+              if [ -f patches/latest.patch ]; then
+                echo "```diff"
+                cat patches/latest.patch
+                echo "```"
+              else
+                echo "_Файл patches/latest.patch не найден в коммите ${HEAD_SHA}_"
+              fi
+              echo
+            } >> out/last.md
+          fi
+
+      - name: Publish last.md to ci-report (force)
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan ci-report
+          git rm -rf . >/dev/null 2>&1 || true
+
+          cp out/last.md last.md
+          git add last.md
+          git commit -m "CI digest: last failed run" || true
+          git push -f origin ci-report
