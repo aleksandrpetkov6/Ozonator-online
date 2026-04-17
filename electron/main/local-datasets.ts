@@ -1029,12 +1029,27 @@ function filterSalesRowsStrictByPeriod(
   })
 }
 
+type SalesRefreshProgressInfo = {
+  stage: string
+  rowsCount: number
+  sourceKind?: string
+  scopeKey?: string
+  sourceEndpoints?: string[]
+  requestedPeriod?: SalesPeriod | null
+}
+
+type SalesRefreshOptions = {
+  onProgress?: (info: SalesRefreshProgressInfo) => void
+}
+
 function buildSalesSnapshotTraceMeta(args: {
   rows: any[]
   scopeKey: string
   sourceKind: string
   saveResult?: any
   requestedPeriod?: SalesPeriod | null | undefined
+  salesRowsWithDeliveryDate?: number
+  salesRowsWithStatus?: number
 }) {
   const span = buildRowsDateSpan(Array.isArray(args.rows) ? args.rows : [], ['in_process_at', 'accepted_at', 'delivery_date', 'shipment_date'])
   const droppedByNormalize = Number(args.saveResult?.incomingRowsDroppedByNormalize ?? 0)
@@ -1052,6 +1067,8 @@ function buildSalesSnapshotTraceMeta(args: {
     snapshotMaxRows: Number(args.saveResult?.maxRows ?? 0),
     snapshotMergeStrategy: normalizeTextValue(args.saveResult?.mergeStrategy),
     snapshotRowsSpan: formatDateSpanLabel(span.from, span.to),
+    salesRowsWithDeliveryDate: Number(args.salesRowsWithDeliveryDate ?? 0),
+    salesRowsWithStatus: Number(args.salesRowsWithStatus ?? 0),
   }
 }
 
@@ -1828,6 +1845,7 @@ export async function ingestOzonFboPushPayload(args: {
 export async function refreshSalesRawSnapshotFromApi(
   secrets: Secrets,
   requestedPeriod: SalesPeriod | null | undefined,
+  options: SalesRefreshOptions = {},
 ) {
   const normalizedRequestedPeriod = normalizeSalesPeriod(requestedPeriod)
 
@@ -1890,6 +1908,15 @@ export async function refreshSalesRawSnapshotFromApi(
         requestedPeriodFrom: normalizedRequestedPeriod.from,
         requestedPeriodTo: normalizedRequestedPeriod.to,
       },
+    })
+
+    options.onProgress?.({
+      stage: 'fast-list-snapshot',
+      rowsCount: fastSnapshot.rowsCount,
+      sourceKind: 'api-live-list-fast',
+      scopeKey: buildDatasetScopeKey(requestedPeriod),
+      sourceEndpoints: fastSnapshot.sourceEndpoints,
+      requestedPeriod: requestedPeriod ?? null,
     })
 
     if (shouldUseFastSalesListFirstRefresh()) {
@@ -2427,6 +2454,15 @@ export async function refreshSalesRawSnapshotFromApi(
         }),
       })
     }
+
+    options.onProgress?.({
+      stage: 'full-sales-snapshot',
+      rowsCount: rows.length,
+      sourceKind: 'api-live',
+      scopeKey: buildDatasetScopeKey(requestedPeriod),
+      sourceEndpoints,
+      requestedPeriod: requestedPeriod ?? null,
+    })
 
     return { rowsCount: rows.length }
   } catch (e: any) {
