@@ -1646,7 +1646,7 @@ function trimSalesListPayloadForSessionSnapshot(payload: any) {
 }
 
 function shouldUseFastSalesListFirstRefresh(): boolean {
-  return true
+  return false
 }
 
 function persistFastSalesSessionSnapshot(args: {
@@ -1692,16 +1692,9 @@ function persistFastSalesSessionSnapshot(args: {
     period: normalizedRequestedPeriod,
     payloads: args.fboPayloads.map((item) => trimSalesListPayloadForSessionSnapshot(item.payload)),
   })
-  persistRawSnapshot(SALES_CACHE_SNAPSHOT_ENDPOINTS.details, {
-    period: normalizedRequestedPeriod,
-    items: [],
-    skippedReason: 'fast-list-first-refresh',
-  })
-  persistRawSnapshot(SALES_CACHE_SNAPSHOT_ENDPOINTS.postingsReport, {
-    period: normalizedRequestedPeriod,
-    rows: [],
-    skippedReason: 'fast-list-first-refresh',
-  })
+  // Fast-list mode must not overwrite detail/report snapshots with empty placeholders.
+  // Details and postings CSV are slower enrichment sources; the full stage below writes
+  // them when Ozon report/detail data is actually available.
 
   const persistedSalesSnapshot = persistDatasetSnapshot({
     storeClientId: args.storeClientId,
@@ -1903,7 +1896,7 @@ export async function refreshSalesRawSnapshotFromApi(
       itemsCount: fastSnapshot.rowsCount,
       meta: {
         mode: 'list-first',
-        reason: 'Sales tab must stop waiting after posting list load; heavy detail/report enrichment is skipped in no-local-db build.',
+        reason: 'Sales tab must stop waiting after posting list load; detail/report enrichment continues in the background.',
         sourceEndpoints: fastSnapshot.sourceEndpoints,
         requestedPeriodFrom: normalizedRequestedPeriod.from,
         requestedPeriodTo: normalizedRequestedPeriod.to,
